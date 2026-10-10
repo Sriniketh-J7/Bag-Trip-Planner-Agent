@@ -82,13 +82,33 @@ with tabs[2]:
                 f"Rs.{fl['price_inr']:,} | {fl['departure_time']} to {fl['arrival_time']} | {fl['stops']} stop(s)",
                 "Flights unavailable")
 
+
 with tabs[3]:
     h = state.get("hotels", {})
     sel_h = state.get("selected_hotel")
-    render_list(h, "hotels", lambda ht: f"{'⭐ ' if ht == sel_h else ''}**{ht['name']}** | "
-                f"{'Rs.' + format(ht['price_inr'], ',.0f') + '/night' if ht.get('price_inr') else 'price n/a'} | "
-                f"rating {ht.get('rating', 'n/a')} ({ht.get('reviews_count', 0)} reviews)",
-                "Hotels unavailable")
+
+    def format_hotel_price(price):
+        if price is None or price == "":
+            return "price n/a"
+
+        try:
+            cleaned = str(price).replace(",", "").replace("₹", "").strip()
+            return f"Rs.{float(cleaned):,.0f}/night"
+        except (ValueError, TypeError):
+            return "price n/a"
+
+    render_list(
+        h,
+        "hotels",
+        lambda ht: (
+            f"{'⭐ ' if ht == sel_h else ''}**{ht['name']}** | "
+            f"{format_hotel_price(ht.get('price_inr'))} | "
+            f"rating {ht.get('rating', 'n/a')} "
+            f"({ht.get('reviews_count', 0)} reviews)"
+        ),
+        "Hotels unavailable"
+    )
+
 
 with tabs[4]:
     r = state.get("restaurants", {})

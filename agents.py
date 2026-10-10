@@ -98,27 +98,72 @@ def attractions_agent(state: TripState) -> TripState:
     return state
 
 
+
 def budget_agent(state: TripState) -> TripState:
     from datetime import datetime
+
+    def to_number(value):
+        if value is None or value == "":
+            return 0
+
+        if isinstance(value, (int, float)):
+            return value
+
+        cleaned = re.sub(r"[^\d.]", "", str(value).replace(",", ""))
+        return float(cleaned) if cleaned else 0
+
     flight_price = (state.get("selected_flight") or {}).get("price_inr")
     hotel_price = (state.get("selected_hotel") or {}).get("price_inr")
+
     try:
-        nights = max((datetime.strptime(state["end_date"], "%Y-%m-%d")
-                      - datetime.strptime(state["start_date"], "%Y-%m-%d")).days, 1)
+        nights = max(
+            (
+                datetime.strptime(state["end_date"], "%Y-%m-%d")
+                - datetime.strptime(state["start_date"], "%Y-%m-%d")
+            ).days,
+            1,
+        )
     except Exception:
         nights = 1
+
     travelers = state.get("travelers", 1)
+
+    hotel_price = to_number(hotel_price)
+    flight_price = to_number(flight_price)
+
     hotel_total = hotel_price * nights if hotel_price else None
-    actual = {"flight_inr": flight_price, "hotel_inr": hotel_total}
-    estimated = {"food_inr": 1200 * nights * travelers, "local_transport_inr": 600 * nights * travelers,
-                 "activities_inr": 1500 * nights * travelers}
-    total = sum(v for v in actual.values() if v) + sum(estimated.values())
+
+    actual = {
+        "flight_inr": flight_price or None,
+        "hotel_inr": hotel_total,
+    }
+
+    estimated = {
+        "food_inr": 1200 * nights * travelers,
+        "local_transport_inr": 600 * nights * travelers,
+        "activities_inr": 1500 * nights * travelers,
+    }
+
+    total = sum(to_number(v) for v in actual.values()) + sum(
+        to_number(v) for v in estimated.values()
+    )
+
     cap = state.get("budget_cap")
-    state["budget"] = {"nights": nights, "actual_retrieved": actual, "ai_estimated": estimated,
-                        "estimated_total_inr": total, "budget_cap_inr": cap,
-                        "within_budget": (total <= cap) if cap else None}
+
+    state["budget"] = {
+        "nights": nights,
+        "actual_retrieved": actual,
+        "ai_estimated": estimated,
+        "estimated_total_inr": total,
+        "budget_cap_inr": cap,
+        "within_budget": (total <= cap) if cap else None,
+    }
+
     _log(state, f"Budget: total Rs.{total:,.0f}")
+
     return state
+
+
 
 
 def recommendation_agent(state: TripState) -> TripState:
