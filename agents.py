@@ -49,6 +49,11 @@ def _log(state: TripState, msg: str):
     state.setdefault("log", []).append(msg)
 
 
+def _lowest_priced(items: list[dict], field: str) -> dict:
+    """Select a real, lowest-priced option; records with no price are last."""
+    return min(items, key=lambda item: sp.price_sort_key(item.get(field)))
+
+
 # ---------------------------------------------------------------------------
 # Agent nodes (no LLM calls - pure API + data shaping)
 # ---------------------------------------------------------------------------
@@ -64,7 +69,7 @@ def flight_agent(state: TripState) -> TripState:
                              state.get("end_date"), "round_trip")
     state["flights"] = res
     if res.get("ok") and res.get("flights"):
-        state["selected_flight"] = min(res["flights"], key=lambda f: f.get("price_inr") or float("inf"))
+        state["selected_flight"] = _lowest_priced(res["flights"], "price_inr")
     _log(state, f"Flight: {'ok' if res.get('ok') else res.get('error')}")
     return state
 
@@ -73,14 +78,18 @@ def hotel_agent(state: TripState) -> TripState:
     res = sp.search_hotels(state["destination"], state["start_date"], state["end_date"], state.get("travelers", 1))
     state["hotels"] = res
     if res.get("ok") and res.get("hotels"):
-        rated = [h for h in res["hotels"] if h.get("rating")]
-        state["selected_hotel"] = max(rated, key=lambda h: h["rating"]) if rated else res["hotels"][0]
+        # Budget plans should not silently choose a high-rated luxury stay.
+        state["selected_hotel"] = _lowest_priced(res["hotels"], "price_inr")
     _log(state, f"Hotel: {'ok' if res.get('ok') else res.get('error')}")
     return state
 
 
 def restaurant_agent(state: TripState) -> TripState:
-    res = sp.search_places(state["destination"], "best rated restaurants")
+    # Request affordable local options directly instead of broad, often premium,
+    # "best rated" results. Sort known price tiers before unknown prices.
+    res = sp.search_places(state["destination"], "affordable budget restaurants local food")
+    if res.get("ok"):
+        res["places"].sort(key=lambda place: sp.price_sort_key(place.get("price_level")))
     state["restaurants"] = res
     _log(state, f"Restaurant: {'ok' if res.get('ok') else res.get('error')}")
     return state
@@ -256,6 +265,15 @@ def rule_based_route(message: str, state: TripState) -> Optional[dict]:
         return None  # nothing recognizable at all - fall back to LLM
 
     if amount:
+        # A total-budget request must refresh the choices that determine the
+        # total, not merely recompute the old selections. Respect explicit
+        # "keep" instructions if the user supplied them.
+        if not any(f"keep {word}" in text or f"keep the {word}" in text for word in AGENT_KEYWORDS["flight"]):
+            rerun.add("flight")
+        if not any(f"keep {word}" in text or f"keep the {word}" in text for word in AGENT_KEYWORDS["hotel"]):
+            rerun.add("hotel")
+        if not any(f"keep {word}" in text or f"keep the {word}" in text for word in AGENT_KEYWORDS["restaurant"]):
+            rerun.add("restaurant")
         rerun.add("budget")
     elif rerun & {"flight", "hotel"}:
         rerun.add("budget")  # cost changes if flight/hotel changes
@@ -327,22 +345,50 @@ AGENT_FN = {"weather": weather_agent, "flight": flight_agent, "hotel": hotel_age
 
 
 def summarize_changes(state: TripState) -> str:
-    """Deterministic, zero-LLM summary of what changed after a replan -
-    used instead of a full Gemini recommendation rewrite on every message."""
+    """Summarize trip changes without additional LLM calls."""
     parts = []
+
     if state.get("selected_flight"):
         f = state["selected_flight"]
-        parts.append(f"Flight: {f.get('airline')} - Rs.{f.get('price_inr'):,}" if f.get("price_inr") else "")
+        price = f.get("price_inr")
+
+        if price:
+            try:
+                price = float(str(price).replace(",", "").replace("₹", "").strip())
+                parts.append(f"Flight: {f.get('airline')} - Rs.{price:,.0f}")
+            except (ValueError, TypeError):
+                parts.append(f"Flight: {f.get('airline')} - price unavailable")
+
     if state.get("selected_hotel"):
         h = state["selected_hotel"]
-        parts.append(f"Hotel: {h.get('name')} - Rs.{h.get('price_inr'):,}/night" if h.get("price_inr") else "")
+        price = h.get("price_inr")
+
+        if price:
+            try:
+                price = float(str(price).replace(",", "").replace("₹", "").strip())
+                parts.append(f"Hotel: {h.get('name')} - Rs.{price:,.0f}/night")
+            except (ValueError, TypeError):
+                parts.append(f"Hotel: {h.get('name')} - price unavailable")
+
     b = state.get("budget", {})
-    if b.get("estimated_total_inr"):
-        status = ""
-        if b.get("budget_cap_inr"):
-            status = " (within budget)" if b.get("within_budget") else " (over budget)"
-        parts.append(f"Updated total: Rs.{b['estimated_total_inr']:,.0f}{status}")
-    return " | ".join(p for p in parts if p) or "Updated - see tabs above."
+
+    if b.get("estimated_total_inr") is not None:
+        try:
+            total = float(b["estimated_total_inr"])
+            status = ""
+
+            if b.get("budget_cap_inr"):
+                status = (
+                    " (within budget)"
+                    if b.get("within_budget")
+                    else " (over budget)"
+                )
+
+            parts.append(f"Updated total: Rs.{total:,.0f}{status}")
+        except (ValueError, TypeError):
+            pass
+
+    return " | ".join(parts) or "Updated - see tabs above."
 
 
 def run_replan(state: TripState, message: str) -> TripState:
@@ -351,8 +397,11 @@ def run_replan(state: TripState, message: str) -> TripState:
     summary. Does NOT call Gemini for a full recommendation rewrite - call
     recommendation_agent(state) separately if the user wants that."""
     state = route_constraint(state, message)
+    # Budget must run last: it depends on the freshly selected flight/hotel.
+    # Previously an alphabetic route order ran it first, showing stale totals.
     for agent_name in state.get("rerun", []):
-        state = AGENT_FN[agent_name](state)
-    if state.get("rerun") and "budget" not in state["rerun"]:
+        if agent_name != "budget":
+            state = AGENT_FN[agent_name](state)
+    if state.get("rerun"):
         state = budget_agent(state)
     return state

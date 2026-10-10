@@ -1,12 +1,33 @@
-# 🎒 BagTrip Planner
+# 🎒 BagTrip
 
-AI multi-agent trip planner built for the **SerpApi India Hackathon 2026**.
+## Intelligent trip research and planning
 
-Weather, Flights, Hotels, Food, Attractions, and Budget agents are coordinated by a LangGraph Trip Manager, with Gemini powering natural-language replanning and the final recommendation.
+BagTrip is a travel-planning workspace that turns a route, travel dates, and budget into a clear, live-data trip board. It researches flights, stays, local food, activities, weather, and total cost in one workflow—then lets travelers refine the result in natural language.
+
+The product is designed to be transparent: live supplier data is labelled, estimated costs are separate from retrieved prices, and unavailable information is shown as unavailable rather than invented.
+
+## Product capabilities
+
+- Live flight, hotel, restaurant, attraction, and weather research
+- Dark travel dashboard with visual cards, source labels, and SerpApi-supplied imagery when available
+- Lowest-price-first flight and hotel selection, plus affordable local-food discovery
+- Clear budget view separating live prices from trip estimates
+- Natural-language refinements such as “find a cheaper hotel” or “keep the flight under ₹20,000 total”
+- Graceful handling for missing API keys, unavailable routes, and provider errors
 
 ---
 
-## 🚀 Installation & Setup
+## Technology stack
+
+| Layer | Technology | Role |
+|---|---|---|
+| Product UI | Streamlit | Responsive trip workspace and refinement controls |
+| Workflow orchestration | LangGraph | Runs specialist agents in a predictable sequence |
+| AI | Google Gemini(gemini-3.8-flash) via LangChain | Writes the itinerary narrative and interprets ambiguous refinements |
+| Live travel data | SerpApi | Google Flights, Google Hotels, Google Maps, and Google Search results |
+| Configuration | python-dotenv | Loads local secrets from `.env` |
+
+## Quick start
 
 ### 1. Prerequisites
 
@@ -35,7 +56,7 @@ Python 3.12.x
 
 ---
 
-### 2. Clone the Repository
+### 2. Get the code
 
 ```bash
 git clone <YOUR_GITHUB_REPOSITORY_URL>
@@ -44,7 +65,7 @@ cd bagtrip
 
 ---
 
-### 3. Create a Virtual Environment
+### 3. Create a virtual environment
 
 #### Windows PowerShell
 
@@ -73,7 +94,7 @@ python --version
 
 ---
 
-### 4. Install Dependencies
+### 4. Install dependencies
 
 Upgrade pip:
 
@@ -89,7 +110,7 @@ pip install -r requirements.txt
 
 ---
 
-### 5. Configure API Keys
+### 5. Configure API keys
 
 Create a `.env` file in the project root.
 
@@ -119,7 +140,6 @@ GOOGLE_API_KEY=your_gemini_api_key
 | `SERPAPI_KEY` | https://serpapi.com/users/sign_up | Flights, Hotels, Maps, Weather |
 | `GOOGLE_API_KEY` | https://aistudio.google.com/app/apikey | Gemini AI |
 
-**Never commit `.env` to GitHub.**
 
 Make sure `.gitignore` contains:
 
@@ -131,9 +151,30 @@ __pycache__/
 .streamlit/secrets.toml
 ```
 
+## Data providers and SerpApi usage
+
+BagTrip uses SerpApi as the live-travel-data gateway. A single `SERPAPI_KEY` enables the following Google engines:
+
+| SerpApi engine | Used for | What BagTrip shows |
+|---|---|---|
+| `google_flights` | Flight search | Airlines, departure/arrival times, stops, duration, and live price |
+| `google_hotels` | Accommodation search | Nightly price, rating, address, amenities, and property imagery when returned |
+| `google_maps` | Local discovery | Affordable restaurants, attractions, ratings, addresses, category, and imagery when returned |
+| `google` | Weather lookup | Google weather answer-box forecast for the destination |
+
+The UI never manufactures supplier data. Provider results may be incomplete, change between requests, or be unavailable for a route or date.
+
+## How to use BagTrip
+
+1. Enter your origin, destination, travel dates, number of travelers, and an optional total budget.
+2. Select **Research my trip** to build the first itinerary from live data.
+3. Review each tab: Overview, Weather, Flights, Stays, Food, Things to do, and Budget.
+4. Use **Refine your trip** for targeted changes. For example: `find a hotel and flight below 20000 total`, `show direct flights`, or `keep the flight but find cheaper food`.
+5. Review the Budget tab after every refinement. If live inventory cannot meet a cap, BagTrip presents the lowest available options and makes that clear.
+
 ---
 
-### 6. Run the Application
+### 6. Run BagTrip
 
 With the virtual environment activated:
 
@@ -176,34 +217,26 @@ pip install -r requirements.txt
 
 ---
 
-## What this V1 actually does
+## Specialist agents
 
-- Takes destination, dates, travelers as input
-- Runs 6 specialist agents in sequence (LangGraph pipeline): Weather →
-  Flight → Hotel → Restaurant → Attractions → Budget → Recommendation
-- Every agent calls a real API (SerpApi Google Flights / Google Hotels /
-  Google Maps, and Google Search for weather) and clearly labels its data source
-- Every agent **fails gracefully**: if a key is missing or an API call
-  errors, that section reports "unavailable" instead of crashing the app
-  or inventing data
-- Conversational replanning: type a follow-up like *"find a cheaper hotel
-  but keep the flight"* and Gemini (acting as a router) decides which
-  agents to re-run, then only those re-run
-- Budget tab clearly separates **actual retrieved prices** (flight, hotel)
-  from **AI-estimated costs** (food, local transport, activities)
+BagTrip uses a LangGraph workflow rather than a single all-purpose prompt. Each specialist owns one clear responsibility:
 
-## What's intentionally out of V1 (and why)
+| Agent | Role | Output behavior |
+|---|---|---|
+| Weather | Retrieves a destination forecast | Maps available forecast days onto the trip window; never guesses beyond provider data |
+| Flight | Searches route and dates | Selects the lowest priced returned flight and keeps all options visible |
+| Hotel | Searches accommodation | Orders live stays by nightly price and selects the lowest priced returned stay |
+| Restaurant | Discovers local food | Searches specifically for affordable local restaurants and prioritizes known lower price tiers |
+| Attractions | Finds things to do | Combines well-known attractions with lesser-known destination results |
+| Budget | Calculates trip cost | Combines retrieved flight/stay prices with explicit estimates for food, local transport, and activities |
+| Recommendation | Creates the overview | Uses Gemini to turn the researched state into a concise itinerary narrative |
+| Constraint router | Interprets refinements | Uses free rule-based routing first, then Gemini only for ambiguous requests; re-runs only the relevant agents |
 
-The original brief mentions Airbnb, TripAdvisor, and Yelp APIs. These
-don't have accessible free/legitimate public APIs for a project like this
-(Airbnb's official API is partner-only; TripAdvisor's API requires a
-paid/approved partnership; Yelp's API has very limited non-US coverage).
-Scraping them would violate their terms and the hackathon's own rule
-against bypassing site protections - so V1 covers accommodation via
-**Google Hotels** and food/attractions/reviews via **Google Maps / Google
-Local**, both through SerpApi. The code is structured (see
-`serpapi_tools.py`) so a legitimate Airbnb/TripAdvisor partner API can be
-dropped in as another function later without touching the agent graph.
+For a total-budget request, BagTrip refreshes flights, stays, food, and the budget calculation. Budget always runs after the new live results have been selected.
+
+## Product boundaries
+
+BagTrip currently uses Google Hotels for accommodation and Google Maps for restaurants and attractions through SerpApi. Partner-only or restricted providers are intentionally not scraped. The provider layer is isolated in `serpapi_tools.py`, so an approved partner integration can be added without changing the agent workflow.
 
 ## Weather
 
@@ -214,7 +247,7 @@ box Google shows for searches such as:
 weather in Hyderabad
 ```
 
-There is no separate weather API key in V1.
+There is no separate weather API key; weather uses the configured SerpApi key.
 
 **Important:** Google's weather answer box only forecasts approximately
 10 days from today and does not provide arbitrary historical/future weather
@@ -232,7 +265,6 @@ bagtrip/
 ├── weather_tool.py     # Weather wrapper
 ├── config.py           # Environment variable loading
 ├── requirements.txt    # Python dependencies
-├── .env.example        # Environment variable template
 ├── .gitignore
 └── README.md
 ```
@@ -268,114 +300,16 @@ Streamlit UI
 User
   │
   ▼
-Chat input
+Refinement input
   │
   ▼
-Gemini Router
+Rule-based router (Gemini fallback)
   │
   ├── Decide which agents need new data
   │
   ▼
-Only required agents re-run
+Relevant live-data agents re-run
   │
   ▼
-Budget + Recommendation regenerate
+Budget recalculates from the refreshed selections
 ```
-
-## Known limitations / honest notes for judges
-
-- Flight/hotel "best pick" selection is a simple heuristic (cheapest
-  flight, highest-rated hotel) rather than a separate LLM reasoning step -
-  kept deterministic for reliability during a live demo.
-- Review deep-dives (`search_place_reviews` in `serpapi_tools.py`) are
-  wired up but not called from the main flow by default, to keep SerpApi
-  credit usage low during testing. Easy to enable per-place.
-- No database (as specified) - trip state lives in Streamlit session state
-  for the session only.
-- API availability and free-tier quotas depend on the provider.
-- Flight and hotel prices are live search results and can change between
-  searches.
-- Some destinations may not have complete or matching flight/hotel data.
-- The application does not invent missing API data; unavailable sections
-  are explicitly marked as unavailable.
-
-## 🛡️ Security
-
-Never expose API keys in:
-
-- GitHub commits
-- Screenshots
-- Streamlit error messages
-- README files
-- Public demo videos
-
-If an API key is accidentally exposed, **revoke/rotate it immediately** and
-replace it with a new key in `.env`.
-
-## 🌐 Streamlit Deployment
-
-For Streamlit Community Cloud:
-
-1. Push the project to GitHub.
-2. Create a new Streamlit app.
-3. Select the repository and `app.py`.
-4. Use **Python 3.12** as the runtime if available.
-5. Add your secrets in Streamlit's Secrets settings instead of committing
-   `.env`.
-6. Deploy the application.
-
-For deployment, do **not** upload:
-
-```text
-venv/
-.env
-__pycache__/
-*.pyc
-```
-
-The platform installs packages from:
-
-```text
-requirements.txt
-```
-
-## 🔄 Recreating the Project Environment
-
-If the virtual environment is deleted, nothing important is lost.
-
-Simply recreate it:
-
-```bash
-py -3.12 -m venv venv
-```
-
-Activate it:
-
-```powershell
-.\venv\Scripts\Activate.ps1
-```
-
-Then:
-
-```bash
-pip install -r requirements.txt
-```
-
-Run:
-
-```bash
-streamlit run app.py
-```
-
-## 🏆 Hackathon Focus
-
-**BagTrip Planner** is designed around a practical multi-agent workflow:
-
-- Real-world travel data
-- Specialized AI agents
-- LangGraph orchestration
-- Gemini-powered natural-language replanning
-- Graceful API failure handling
-- Transparent distinction between retrieved and estimated costs
-- Deterministic recommendations for reliable demos
-- No fabricated travel information

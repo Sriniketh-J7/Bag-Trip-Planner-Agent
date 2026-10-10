@@ -1,9 +1,24 @@
 """SerpApi wrappers: Google Flights, Google Hotels, Google Maps. Each call
 returns {"ok": bool, "source": str, ...} so a failure never crashes the graph."""
+import re
 import requests
 from config import SERPAPI_KEY
 
 BASE_URL = "https://serpapi.com/search.json"
+
+
+def price_sort_key(value) -> float:
+    """Best-effort ordering for SerpApi's mixed price formats; unknown is last."""
+    if value is None or value == "":
+        return float("inf")
+    if isinstance(value, (int, float)):
+        return float(value)
+    numbers = re.findall(r"\d+(?:[,.]\d+)?", str(value).replace(",", ""))
+    if numbers:
+        return float(numbers[0])
+    # Google Maps may use $, $$, etc. when no amount is exposed.
+    symbols = str(value).count("$") + str(value).count("₹")
+    return float(symbols or 999_999)
 
 # City name -> IATA airport code. Google Flights requires a code, not a city
 # name - this was the Chennai bug: "Chennai" was being sent straight to the
@@ -99,7 +114,13 @@ def search_hotels(destination: str, check_in: str, check_out: str, adults: int =
         "reviews_count": h.get("reviews"),
         "location": h.get("address"),
         "amenities": h.get("amenities", [])[:8],
+        # Google Hotels includes image URLs in its SerpApi response. Keep the
+        # URL with the result so the UI can display the actual property image
+        # without another provider or an extra request.
+        "image_url": h.get("thumbnail") or (h.get("images") or [{}])[0].get("thumbnail")
+                     or (h.get("images") or [{}])[0].get("original"),
     } for h in result["data"].get("properties", [])]
+    result["hotels"].sort(key=lambda hotel: price_sort_key(hotel.get("price_inr")))
     return result
 
 
@@ -111,5 +132,9 @@ def search_places(destination: str, category: str) -> dict:
     result["places"] = [{
         "name": p.get("title"), "rating": p.get("rating"), "reviews_count": p.get("reviews"),
         "price_level": p.get("price"), "type": p.get("type"), "address": p.get("address"),
+        # Google Maps commonly returns a thumbnail; different result shapes
+        # use either thumbnail or images, so support both safely.
+        "image_url": p.get("thumbnail") or p.get("image") or (p.get("images") or [{}])[0].get("thumbnail")
+                     or (p.get("images") or [{}])[0].get("original"),
     } for p in result["data"].get("local_results", [])]
     return result
